@@ -152,3 +152,7 @@ configs/local/default.yaml
 
 # Aim logging
 .aim
+
+# Custom
+/prompt
+/extracode/visualize/PPG_FieldStudy_pickle

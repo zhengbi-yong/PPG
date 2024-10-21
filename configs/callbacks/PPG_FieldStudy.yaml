@@ -1,0 +1,33 @@
+defaults:
+  - model_checkpoint
+  - early_stopping
+  - model_summary
+  - rich_progress_bar
+  - _self_
+
+model_checkpoint:
+  dirpath: ${paths.output_dir}/checkpoints
+  filename: "epoch_{epoch:03d}"
+  monitor: "val/mse"
+  mode: "min"
+  save_last: True
+  auto_insert_metric_name: False
+  verbose: false
+  save_weights_only: false
+  every_n_train_steps: null
+  train_time_interval: null
+  every_n_epochs: null
+  save_on_train_epoch_end: null
+early_stopping:
+  monitor: "val/mse"
+  patience: 100
+  mode: "min"
+  min_delta: 0.0
+  verbose: false
+  strict: true
+  check_finite: true
+  stopping_threshold: null
+  divergence_threshold: null
+  check_on_train_epoch_end: null
+model_summary:
+  max_depth: -1

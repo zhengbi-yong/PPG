@@ -5,7 +5,18 @@ from typing import Any, Dict, Optional, Tuple
 import torch
 from torch.utils.data import Dataset, DataLoader, random_split
 from sklearn.preprocessing import StandardScaler
-from lightning import LightningDataModule
+from pytorch_lightning import LightningDataModule, Trainer, LightningModule
+import torch.nn as nn
+import torch.nn.functional as F
+from torchmetrics import MeanMetric
+from torch.optim import Adam
+from torch.optim.lr_scheduler import StepLR
+from pytorch_lightning.callbacks import TQDMProgressBar
+
+# from pytorch_lightning.loggers import TensorBoardLogger  # Import Logger (optional)
+
+# Optional: Set float32 matmul precision for Tensor Cores
+torch.set_float32_matmul_precision("high")  # or 'medium'
 
 
 class PPGDataset(Dataset):
@@ -307,3 +318,186 @@ class PPGDataModule(LightningDataModule):
             num_workers=self.num_workers,  # Set to 0 for debugging
             pin_memory=True,
         )
+
+
+class PPGLitModule(LightningModule):
+    def __init__(
+        self,
+        input_dim: int,
+        hidden_dim: int = 128,
+        lr: float = 1e-3,
+        scheduler_step_size: int = 10,
+        scheduler_gamma: float = 0.1,
+    ):
+        """
+        LightningModule for PPG-based physiological indicator prediction.
+
+        :param input_dim: Number of input features.
+        :param hidden_dim: Number of hidden units.
+        :param lr: Learning rate.
+        :param scheduler_step_size: Step size for learning rate scheduler.
+        :param scheduler_gamma: Gamma for learning rate scheduler.
+        """
+        super().__init__()
+        self.save_hyperparameters()
+
+        # Define the network architecture
+        self.encoder = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+        )
+
+        self.regressor = nn.Sequential(
+            nn.Linear(hidden_dim // 2, hidden_dim // 4),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(hidden_dim // 4, 1),  # Single output
+        )
+
+        # Loss function
+        self.criterion = nn.MSELoss()
+
+        # Metrics
+        self.train_mse = MeanMetric()
+        self.val_mse = MeanMetric()
+        self.test_mse = MeanMetric()
+
+    def forward(self, x):
+        """
+        Forward pass.
+
+        :param x: Input tensor of shape [batch_size, 14]
+        :return: Predicted tensor of shape [batch_size]
+        """
+        encoded = self.encoder(x)  # [batch_size, hidden_dim//2]
+        output = self.regressor(encoded)  # [batch_size, 1]
+        return output.squeeze(1)  # [batch_size]
+
+    def training_step(self, batch, batch_idx):
+        """
+        Training step.
+
+        :param batch: Batch of data.
+        :param batch_idx: Batch index.
+        :return: Loss value.
+        """
+        x, y = batch  # x: [batch_size, 14], y: [batch_size]
+        y_pred = self.forward(x)  # [batch_size]
+        loss = self.criterion(y_pred, y)
+
+        # Log loss and metric
+        self.log("train/loss", loss, on_step=False, on_epoch=True, prog_bar=True)
+        self.train_mse(y_pred, y)
+        self.log(
+            "train/mse", self.train_mse, on_step=False, on_epoch=True, prog_bar=True
+        )
+
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        """
+        Validation step.
+
+        :param batch: Batch of data.
+        :param batch_idx: Batch index.
+        """
+        x, y = batch  # x: [batch_size, 14], y: [batch_size]
+        y_pred = self.forward(x)  # [batch_size]
+        loss = self.criterion(y_pred, y)
+
+        # Log loss and metric
+        self.log("val/loss", loss, on_step=False, on_epoch=True, prog_bar=True)
+        self.val_mse(y_pred, y)
+        self.log("val/mse", self.val_mse, on_step=False, on_epoch=True, prog_bar=True)
+
+    def test_step(self, batch, batch_idx):
+        """
+        Test step.
+
+        :param batch: Batch of data.
+        :param batch_idx: Batch index.
+        """
+        x, y = batch  # x: [batch_size, 14], y: [batch_size]
+        y_pred = self.forward(x)  # [batch_size]
+        loss = self.criterion(y_pred, y)
+
+        # Log loss and metric
+        self.log("test/loss", loss, on_step=False, on_epoch=True, prog_bar=True)
+        self.test_mse(y_pred, y)
+        self.log("test/mse", self.test_mse, on_step=False, on_epoch=True, prog_bar=True)
+
+    def configure_optimizers(self):
+        """
+        Configure optimizers and learning rate schedulers.
+
+        :return: Optimizer and scheduler configuration.
+        """
+        optimizer = Adam(self.parameters(), lr=self.hparams.lr)
+        scheduler = StepLR(
+            optimizer,
+            step_size=self.hparams.scheduler_step_size,
+            gamma=self.hparams.scheduler_gamma,
+        )
+        return [optimizer], [scheduler]
+
+
+if __name__ == "__main__":
+    # Define the data directory
+    data_directory = "./data/PPG_FieldStudy"
+
+    # Initialize the DataModule
+    ppg_data_module = PPGDataModule(
+        data_dir=data_directory,
+        window_size=256,
+        stride=128,
+        batch_size=64,
+        num_workers=0,  # Set to 0 for debugging
+        train_split=0.7,
+        val_split=0.15,
+        test_split=0.15,
+    )
+
+    # Setup the data (load and preprocess)
+    ppg_data_module.setup()
+
+    # Determine the input dimension based on the data
+    # Assuming the following sensors and channels:
+    # chest/ACC: 3, chest/ECG: 1, chest/EMG: 1, chest/EDA: 1, chest/Temp: 1, chest/Resp: 1
+    # wrist/ACC: 3, wrist/BVP: 1, wrist/EDA: 1, wrist/TEMP: 1
+    # Total input features = 3 + 1 + 1 + 1 + 1 + 1 + 3 + 1 + 1 + 1 = 14
+    input_dim = 14
+
+    # Initialize the model
+    model = PPGLitModule(
+        input_dim=input_dim,
+        hidden_dim=128,
+        lr=1e-3,
+        scheduler_step_size=10,
+        scheduler_gamma=0.1,
+    )
+
+    # Initialize the ProgressBar callback
+    progress_bar = TQDMProgressBar(refresh_rate=20)  # Set refresh_rate as desired
+
+    # Initialize the Logger (optional)
+    # logger = TensorBoardLogger("tb_logs", name="ppg_model")
+
+    # Initialize the Trainer
+    trainer = Trainer(
+        max_epochs=50,
+        accelerator="gpu" if torch.cuda.is_available() else "cpu",
+        devices=1 if torch.cuda.is_available() else None,
+        callbacks=[progress_bar],
+        # logger=logger,  # Enable logging (e.g., TensorBoard)
+        enable_checkpointing=True,  # Enable checkpointing
+    )
+
+    # Train the model
+    trainer.fit(model, datamodule=ppg_data_module)
+
+    # Test the model
+    trainer.test(datamodule=ppg_data_module)

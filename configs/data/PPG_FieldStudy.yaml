@@ -1,0 +1,9 @@
+_target_: src.data.PPGFieldStudyDatamodule.PPGDataModule
+data_dir: "./data/PPG_FieldStudy"
+window_size: 256
+stride: 128
+batch_size: 64
+num_workers: 4 # Set to 0 for debugging
+train_split: 0.7
+val_split: 0.15
+test_split: 0.15

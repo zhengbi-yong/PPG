@@ -1,0 +1,7 @@
+_target_: src.models.PPGBaseModule.PPGBaseModule
+
+input_dim: 14
+hidden_dim: 128
+lr: 1e-3
+scheduler_step_size: 10
+scheduler_gamma: 0.1
