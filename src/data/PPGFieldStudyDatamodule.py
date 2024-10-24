@@ -44,8 +44,8 @@ class PPGDataset(Dataset):
 
         # Validate labels length
         assert (
-            len(labels) == self.num_windows
-        ), f"Number of labels ({len(labels)}) does not match number of windows ({self.num_windows})"
+            len(labels) >= self.num_windows
+        ), f"Number of labels ({len(labels)}) is less than number of windows ({self.num_windows})."
 
         # Normalize signals using StandardScaler
         self.scalers = {}
@@ -61,7 +61,7 @@ class PPGDataset(Dataset):
                     self.scalers[location][sensor] = scaler
 
         self.data = data
-        self.labels = labels
+        self.labels = labels[:self.num_windows]  # Ensure labels match the number of windows
 
     def __len__(self):
         return self.num_windows
@@ -93,21 +93,21 @@ class PPGDataset(Dataset):
         # Concatenate all sensor data along the feature dimension
         chest_features = np.concatenate(
             [features["chest"][sensor] for sensor in features["chest"]], axis=1
-        )  # Shape: [256, 8]
+        )  # Shape: [window_size, 8]
         wrist_features = np.concatenate(
             [features["wrist"][sensor] for sensor in features["wrist"]], axis=1
-        )  # Shape: [256, 6]
+        )  # Shape: [window_size, 6]
         combined_features = np.concatenate(
             [chest_features, wrist_features], axis=1
-        )  # Shape: [256, 14]
+        )  # Shape: [window_size, 14]
 
         if self.transform:
             combined_features = self.transform(combined_features)
 
-        # Aggregate window into single vector by computing the mean across the window_size dimension
-        aggregated_features = combined_features.mean(axis=0)  # Shape: [14]
+        # 保留整个窗口的特征，不进行汇聚
+        aggregated_features = combined_features  # Shape: [window_size, 14]
 
-        # Ensure labels are aligned with windows
+        # 获取对应的标签
         label = self.labels[idx]
 
         return torch.tensor(aggregated_features, dtype=torch.float32), torch.tensor(

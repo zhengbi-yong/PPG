@@ -1,0 +1,11 @@
+_target_: src.models.PPGTransformerModule.PPGTransformerModule
+
+input_dim: 14
+d_model: 128
+nhead: 8
+num_encoder_layers: 4
+dim_feedforward: 256
+dropout: 0.1
+lr: 1e-3
+scheduler_step_size: 10
+scheduler_gamma: 0.1

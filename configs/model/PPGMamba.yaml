@@ -1,0 +1,11 @@
+_target_: src.models.PPGMambaModule.PPGMambaModule
+
+input_dim: 14
+d_model: 128
+d_state: 64
+d_conv: 4
+expand: 2
+dropout: 0.3
+lr: 1e-3
+scheduler_step_size: 10
+scheduler_gamma: 0.1

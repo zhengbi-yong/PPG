@@ -2,10 +2,22 @@
 
 ## 训练
 
+### WINDOWS+GPU
+
 ```bash
 python src/train.py experiment=PPG_FieldStudy_Base callbacks=PPG_FieldStudy logger=tensorboard
+
 python src/train.py experiment=PPG_FieldStudy_Base callbacks=PPG_FieldStudy logger=tensorboard trainer=gpu
-python src/train.py experiment=PPG_FieldStudy_Base logger=tensorboard callbacks=PPG_FieldStudy trainer=gpu debug=fdr 
+
+python src/train.py experiment=PPG_FieldStudy_Base logger=tensorboard callbacks=PPG_FieldStudy trainer=gpu debug=fdr
+```
+
+### WINDOWS+CPU
+
+```powershell
+python src/train.py experiment=PPG_FieldStudy_Base callbacks=PPG_FieldStudy logger=tensorboard trainer.accelerator=cpu
+
+python src/train.py experiment=PPG_FieldStudy_LSTM callbacks=PPG_FieldStudy logger=tensorboard trainer.accelerator=cpu
 ```
 
 ## 实验结果查看
@@ -21,5 +33,3 @@ tensorboard --logdir=./logs/train/runs/
 ```bash
 python src/eval.py ckpt_path="D:\lightning-hydra-template\logs\train\runs\2024-10-06_11-35-20\checkpoints\epoch_005.ckpt"
 ```
-
-

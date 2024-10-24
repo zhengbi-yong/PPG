@@ -1,0 +1,47 @@
+# @package _global_
+
+# to execute this experiment run:
+# python train.py experiment=example
+
+defaults:
+  - override /data: PPG_FieldStudy
+  - override /model: PPGTransformer
+  - override /callbacks: default
+  - override /trainer: default
+
+# all parameters below will be merged with parameters from default configurations set above
+# this allows you to overwrite only specified parameters
+
+tags: ["PPG_FieldStudy", "PPGTransformer"]
+
+seed: 12345
+
+trainer:
+  min_epochs: 10
+  max_epochs: 50
+  gradient_clip_val: 0.5
+  accelerator: "gpu"
+  devices: 1
+  callbacks: [progress_bar]
+  enable_checkpointing: True
+
+model:
+  input_dim: 14
+  d_model: 128
+  nhead: 8
+  num_encoder_layers: 4
+  dim_feedforward: 256
+  dropout: 0.1
+  lr: 1e-3
+  scheduler_step_size: 10
+  scheduler_gamma: 0.1
+
+data:
+  batch_size: 64
+
+logger:
+  wandb:
+    tags: ${tags}
+    group: "PPG_FieldStudy"
+  aim:
+    experiment: "PPG_FieldStudy"
