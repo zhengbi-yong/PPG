@@ -1,4 +1,4 @@
-_target_: src.data.PPGFieldStudyDatamodule.PPGDataModule
+_target_: src.data.PPGFieldStudyMvCFTDatamodule.PPGDataModule
 data_dir: "./data/PPG_FieldStudy/PPG_FieldStudy"
 window_size: 256
 stride: 128
