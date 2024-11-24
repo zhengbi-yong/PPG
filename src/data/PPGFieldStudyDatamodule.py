@@ -61,7 +61,9 @@ class PPGDataset(Dataset):
                     self.scalers[location][sensor] = scaler
 
         self.data = data
-        self.labels = labels[:self.num_windows]  # Ensure labels match the number of windows
+        self.labels = labels[
+            : self.num_windows
+        ]  # Ensure labels match the number of windows
 
     def __len__(self):
         return self.num_windows
@@ -116,6 +118,32 @@ class PPGDataset(Dataset):
 
 
 class PPGDataModule(LightningDataModule):
+    """
+    PPGDataModule is a LightningDataModule for handling PPG dataset.
+    Attributes:
+        data_dir (str): The root directory containing subject folders.
+        window_size (int): Number of time steps per window.
+        stride (int): Stride between windows.
+        batch_size (int): Batch size.
+        num_workers (int): Number of workers for DataLoader.
+        train_split (float): Proportion of data for training.
+        val_split (float): Proportion of data for validation.
+        test_split (float): Proportion of data for testing.
+        train_dataset (Optional[Dataset]): Training dataset.
+        val_dataset (Optional[Dataset]): Validation dataset.
+        test_dataset (Optional[Dataset]): Testing dataset.
+    Methods:
+        setup(stage: Optional[str] = None):
+            Args:
+                stage (Optional[str]): Optional stage to setup (fit, validate, test, predict).
+        train_dataloader():
+            Returns DataLoader for training dataset.
+        val_dataloader():
+            Returns DataLoader for validation dataset.
+        test_dataloader():
+            Returns DataLoader for testing dataset.
+    """
+
     def __init__(
         self,
         data_dir: str = "./data/PPG_FieldStudy",
