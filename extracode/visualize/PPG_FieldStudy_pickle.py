@@ -3,7 +3,7 @@ import pickle
 import numpy as np
 import os
 
-DATA_PATH = "./data/PPG_FieldStudy/S1/S1.pkl"
+DATA_PATH = "./data/PPG_FieldStudy/PPG_FieldStudy/S1/S1.pkl"
 RESULT_PATH = "./extracode/visualize/PPG_FieldStudy_pickle"
 
 # 确保结果目录存在

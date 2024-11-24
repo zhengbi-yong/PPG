@@ -1,64 +1,106 @@
 import os
 import pickle
-import numpy as np
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
+
 import torch
 from torch.utils.data import Dataset, DataLoader, random_split
-from sklearn.preprocessing import StandardScaler
 from lightning import LightningDataModule
+
+
+class TorchStandardScaler:
+    def __init__(self):
+        self.mean = None
+        self.std = None
+
+    def fit(self, data: torch.Tensor):
+        """
+        计算数据的均值和标准差。
+
+        :param data: 输入数据张量，形状为 [时间步, 特征]
+        """
+        self.mean = torch.mean(data, dim=0)
+        self.std = torch.std(data, dim=0)
+        return self
+
+    def transform(self, data: torch.Tensor) -> torch.Tensor:
+        """
+        使用计算得到的均值和标准差对数据进行标准化。
+
+        :param data: 输入数据张量，形状为 [时间步, 特征]
+        :return: 标准化后的数据张量
+        """
+        return (data - self.mean) / self.std
+
+    def fit_transform(self, data: torch.Tensor) -> torch.Tensor:
+        """
+        计算均值和标准差，并对数据进行标准化。
+
+        :param data: 输入数据张量，形状为 [时间步, 特征]
+        :return: 标准化后的数据张量
+        """
+        self.fit(data)
+        return self.transform(data)
 
 
 class PPGDataset(Dataset):
     def __init__(
         self,
         data: Dict[str, Any],
-        labels: np.ndarray,
+        labels: torch.Tensor,
         window_size: int = 256,
         stride: int = 128,
         transform: Optional[Any] = None,
     ):
         """
-        Custom Dataset for PPG data.
+        自定义 PPG 数据集。
 
-        :param data: Dictionary containing concatenated signal data from all subjects.
-        :param labels: Numpy array of concatenated labels from all subjects.
-        :param window_size: Number of time steps per window.
-        :param stride: Stride between windows.
-        :param transform: Optional transform to be applied on a sample.
+        :param data: 包含所有受试者拼接信号数据的字典。
+        :param labels: 拼接后的标签张量。
+        :param window_size: 每个窗口的时间步数。
+        :param stride: 窗口之间的步幅。
+        :param transform: 可选的变换操作。
         """
         self.window_size = window_size
         self.stride = stride
         self.transform = transform
 
-        # Assuming all signals have been truncated to the same length
+        # 假设所有信号已被截断到相同长度
         self.length = data["chest"]["ECG"].shape[0]
         self.num_windows = (self.length - window_size) // stride + 1
 
-        # Validate that all signals have the same length
+        # 验证所有信号长度是否相同
         for location in ["chest", "wrist"]:
             for sensor in data[location]:
                 assert data[location][sensor].shape[0] == self.length, (
-                    f"Signal length mismatch in {location}/{sensor}: "
-                    f"expected {self.length}, got {data[location][sensor].shape[0]}"
+                    f"信号长度不匹配在 {location}/{sensor}: "
+                    f"期望 {self.length}, 但得到 {data[location][sensor].shape[0]}"
                 )
 
-        # Validate labels length
+        # 验证标签长度
         assert (
             len(labels) >= self.num_windows
-        ), f"Number of labels ({len(labels)}) is less than number of windows ({self.num_windows})."
+        ), f"标签数量 ({len(labels)}) 少于窗口数量 ({self.num_windows})。"
 
-        # Normalize signals using StandardScaler
+        # 使用 TorchStandardScaler 对信号进行标准化
         self.scalers = {}
         for location in ["chest", "wrist"]:
             self.scalers[location] = {}
             for sensor, signal in data[location].items():
-                scaler = StandardScaler()
-                if signal.ndim > 1:
+                scaler = TorchStandardScaler()
+                if signal.ndimension() > 1:
                     scaler.fit(signal)
                     self.scalers[location][sensor] = scaler
                 else:
-                    scaler.fit(signal.reshape(-1, 1))
+                    scaler.fit(signal.unsqueeze(1))
                     self.scalers[location][sensor] = scaler
+
+                # 标准化信号
+                if signal.ndimension() > 1:
+                    data[location][sensor] = scaler.transform(signal)
+                else:
+                    data[location][sensor] = scaler.transform(
+                        signal.unsqueeze(1)
+                    ).squeeze()
 
         self.data = data
         self.labels = labels[
@@ -70,10 +112,10 @@ class PPGDataset(Dataset):
 
     def __getitem__(self, idx):
         """
-        Retrieves a window of data and its corresponding label.
+        获取指定索引的窗口数据和对应标签。
 
-        :param idx: Index of the window.
-        :return: Tuple of (features, label)
+        :param idx: 窗口的索引。
+        :return: (特征张量, 标签张量) 的元组
         """
         start = idx * self.stride
         end = start + self.window_size
@@ -83,38 +125,29 @@ class PPGDataset(Dataset):
             features[location] = {}
             for sensor, signal in self.data[location].items():
                 window = signal[start:end]
-                scaler = self.scalers[location][sensor]
-                window = (
-                    scaler.transform(window)
-                    if signal.ndim > 1
-                    else scaler.transform(window.reshape(-1, 1)).squeeze()
-                )
                 features[location][sensor] = window
 
-        # Combine all features into a single array
-        # Concatenate all sensor data along the feature dimension
-        chest_features = np.concatenate(
-            [features["chest"][sensor] for sensor in features["chest"]], axis=1
-        )  # Shape: [window_size, 8]
-        wrist_features = np.concatenate(
-            [features["wrist"][sensor] for sensor in features["wrist"]], axis=1
-        )  # Shape: [window_size, 6]
-        combined_features = np.concatenate(
-            [chest_features, wrist_features], axis=1
-        )  # Shape: [window_size, 14]
+        # 将所有传感器的数据沿特征维度拼接
+        chest_features = torch.cat(
+            [features["chest"][sensor] for sensor in features["chest"]], dim=1
+        )  # 形状: [window_size, chest_features]
+        wrist_features = torch.cat(
+            [features["wrist"][sensor] for sensor in features["wrist"]], dim=1
+        )  # 形状: [window_size, wrist_features]
+        combined_features = torch.cat(
+            [chest_features, wrist_features], dim=1
+        )  # 形状: [window_size, total_features]
 
         if self.transform:
             combined_features = self.transform(combined_features)
 
         # 保留整个窗口的特征，不进行汇聚
-        aggregated_features = combined_features  # Shape: [window_size, 14]
+        aggregated_features = combined_features  # 形状: [window_size, total_features]
 
         # 获取对应的标签
         label = self.labels[idx]
 
-        return torch.tensor(aggregated_features, dtype=torch.float32), torch.tensor(
-            label, dtype=torch.float32
-        )
+        return aggregated_features, label
 
 
 class PPGDataModule(LightningDataModule):
@@ -150,22 +183,22 @@ class PPGDataModule(LightningDataModule):
         window_size: int = 256,
         stride: int = 128,
         batch_size: int = 64,
-        num_workers: int = 0,  # Set to 0 for debugging
+        num_workers: int = 0,  # 调试时设置为 0
         train_split: float = 0.7,
         val_split: float = 0.15,
         test_split: float = 0.15,
     ):
         """
-        DataModule for PPG dataset.
+        PPG 数据集的 DataModule。
 
-        :param data_dir: The root directory containing subject folders.
-        :param window_size: Number of time steps per window.
-        :param stride: Stride between windows.
-        :param batch_size: Batch size.
-        :param num_workers: Number of workers for DataLoader.
-        :param train_split: Proportion of data for training.
-        :param val_split: Proportion of data for validation.
-        :param test_split: Proportion of data for testing.
+        :param data_dir: 包含受试者文件夹的根目录。
+        :param window_size: 每个窗口的时间步数。
+        :param stride: 窗口之间的步幅。
+        :param batch_size: 批大小。
+        :param num_workers: DataLoader 的工作线程数量。
+        :param train_split: 训练集的比例。
+        :param val_split: 验证集的比例。
+        :param test_split: 测试集的比例。
         """
         super().__init__()
         self.data_dir = data_dir
@@ -183,11 +216,11 @@ class PPGDataModule(LightningDataModule):
 
     def setup(self, stage: Optional[str] = None):
         """
-        Load and preprocess data from all subjects.
+        加载并预处理所有受试者的数据。
 
-        :param stage: Optional stage to setup (fit, validate, test, predict).
+        :param stage: 可选的阶段 (fit, validate, test, predict)。
         """
-        # Initialize empty dictionaries for concatenated data
+        # 初始化用于拼接数据的字典
         concatenated_data = {
             "chest": {
                 "ACC": [],
@@ -206,57 +239,59 @@ class PPGDataModule(LightningDataModule):
         }
         concatenated_labels = []
 
-        # Iterate through each subject directory (S1 to S15)
+        # 遍历每个受试者目录 (S1 到 S15)
         for subject_num in range(1, 16):
             subject_dir = os.path.join(self.data_dir, f"S{subject_num}")
             pkl_file = os.path.join(subject_dir, f"S{subject_num}.pkl")
 
             if not os.path.isfile(pkl_file):
-                print(f"Pickle file not found: {pkl_file}. Skipping.")
+                print(f"Pickle 文件未找到: {pkl_file}. 跳过。")
                 continue
 
             try:
                 with open(pkl_file, "rb") as f:
                     subject_data = pickle.load(f, encoding="latin1")
-                print(f"Loaded {pkl_file} successfully.")
+                print(f"成功加载 {pkl_file}.")
             except Exception as e:
-                print(f"Error loading {pkl_file}: {e}. Skipping.")
+                print(f"加载 {pkl_file} 时出错: {e}. 跳过。")
                 continue
 
-            # Concatenate each sensor's data
+            # 拼接每个传感器的数据
             for location in ["chest", "wrist"]:
                 for sensor, signal in subject_data["signal"][location].items():
-                    concatenated_data[location][sensor].append(signal)
+                    concatenated_data[location][sensor].append(
+                        torch.tensor(signal, dtype=torch.float32)
+                    )
 
-            # Concatenate labels
-            concatenated_labels.append(subject_data["label"])
-
-        if not concatenated_labels:
-            raise ValueError(
-                "No valid pickle files were loaded. Please check your data."
+            # 拼接标签
+            concatenated_labels.append(
+                torch.tensor(subject_data["label"], dtype=torch.float32)
             )
 
-        # After loading all subjects, concatenate the signals along the time axis
+        if not concatenated_labels:
+            raise ValueError("未加载到任何有效的 Pickle 文件。请检查你的数据。")
+
+        # 拼接所有受试者的信号数据
         for location in ["chest", "wrist"]:
             for sensor in concatenated_data[location]:
-                # Stack along the first dimension (time)
-                concatenated_data[location][sensor] = np.concatenate(
-                    concatenated_data[location][sensor], axis=0
+                # 沿时间轴拼接
+                concatenated_data[location][sensor] = torch.cat(
+                    concatenated_data[location][sensor], dim=0
                 )
                 print(
-                    f"Sensor '{location}/{sensor}' concatenated shape: {concatenated_data[location][sensor].shape}"
+                    f"传感器 '{location}/{sensor}' 拼接后的形状: {concatenated_data[location][sensor].shape}"
                 )
 
-        # Compute the minimum length across all sensors
+        # 计算所有传感器的最小长度
         lengths = [
             concatenated_data[location][sensor].shape[0]
             for location in ["chest", "wrist"]
             for sensor in concatenated_data[location]
         ]
         min_length = min(lengths)
-        print(f"Minimum signal length across all sensors: {min_length}")
+        print(f"所有传感器的最小信号长度: {min_length}")
 
-        # Truncate all signals to min_length
+        # 将所有信号截断到最小长度
         for location in ["chest", "wrist"]:
             for sensor in concatenated_data[location]:
                 original_length = concatenated_data[location][sensor].shape[0]
@@ -264,28 +299,26 @@ class PPGDataModule(LightningDataModule):
                     sensor
                 ][:min_length]
                 print(
-                    f"Truncated '{location}/{sensor}' from {original_length} to {min_length}"
+                    f"截断 '{location}/{sensor}' 从 {original_length} 到 {min_length}"
                 )
 
-        # Concatenate all labels
-        concatenated_labels = np.concatenate(concatenated_labels, axis=0)
-        print(f"Total concatenated labels shape: {concatenated_labels.shape}")
+        # 拼接所有标签
+        concatenated_labels = torch.cat(concatenated_labels, dim=0)
+        print(f"总拼接标签的形状: {concatenated_labels.shape}")
 
-        # Determine the number of windows based on min_length
+        # 根据最小长度计算窗口数量
         num_windows = (min_length - self.window_size) // self.stride + 1
-        print(f"Number of windows based on min_length: {num_windows}")
+        print(f"基于最小长度的窗口数量: {num_windows}")
 
-        # Ensure there are enough labels
+        # 确保有足够的标签
         if len(concatenated_labels) < num_windows:
             raise ValueError(
-                f"Not enough labels ({len(concatenated_labels)}) for the number of windows ({num_windows})."
+                f"标签数量 ({len(concatenated_labels)}) 少于窗口数量 ({num_windows})。"
             )
         concatenated_labels = concatenated_labels[:num_windows]
-        print(
-            f"Truncated labels to match number of windows: {concatenated_labels.shape}"
-        )
+        print(f"截断标签以匹配窗口数量: {concatenated_labels.shape}")
 
-        # Initialize the PPGDataset with truncated data and labels
+        # 初始化 PPGDataset
         dataset = PPGDataset(
             data=concatenated_data,
             labels=concatenated_labels,
@@ -293,7 +326,7 @@ class PPGDataModule(LightningDataModule):
             stride=self.stride,
         )
 
-        # Split the dataset into train, val, and test
+        # 将数据集分割为训练集、验证集和测试集
         total_length = len(dataset)
         train_length = int(self.train_split * total_length)
         val_length = int(self.val_split * total_length)
@@ -306,7 +339,7 @@ class PPGDataModule(LightningDataModule):
         )
 
         print(
-            f"Dataset split into Train: {train_length}, Val: {val_length}, Test: {test_length}"
+            f"数据集已分割为 训练集: {train_length}, 验证集: {val_length}, 测试集: {test_length}"
         )
 
     def train_dataloader(self):
@@ -314,7 +347,7 @@ class PPGDataModule(LightningDataModule):
             self.train_dataset,
             batch_size=self.batch_size,
             shuffle=True,
-            num_workers=self.num_workers,  # Set to 0 for debugging
+            num_workers=self.num_workers,  # 调试时设置为 0
             pin_memory=True,
         )
 
@@ -323,7 +356,7 @@ class PPGDataModule(LightningDataModule):
             self.val_dataset,
             batch_size=self.batch_size,
             shuffle=False,
-            num_workers=self.num_workers,  # Set to 0 for debugging
+            num_workers=self.num_workers,  # 调试时设置为 0
             pin_memory=True,
         )
 
@@ -332,6 +365,6 @@ class PPGDataModule(LightningDataModule):
             self.test_dataset,
             batch_size=self.batch_size,
             shuffle=False,
-            num_workers=self.num_workers,  # Set to 0 for debugging
+            num_workers=self.num_workers,  # 调试时设置为 0
             pin_memory=True,
         )

@@ -1,5 +1,12 @@
 # 常用命令
-
+## 下载数据集
+```zsh
+python extracode/download_dataset/PPG_FieldStudy.py
+```
+## 可视化数据集
+```zsh
+python extracode/visualize/PPG_FieldStudy_pickle.py
+```
 ## 训练
 
 ### WINDOWS+GPU
